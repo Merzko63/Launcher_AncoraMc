@@ -2,43 +2,29 @@ package net.minecraft;
 
 import java.applet.Applet;
 import java.awt.image.BufferedImage;
-import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FilePermission;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.JarURLConnection;
-import java.net.SocketPermission;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLConnection;
 import java.security.AccessControlException;
 import java.security.AccessController;
 import java.security.CodeSource;
-import java.security.MessageDigest;
-import java.security.PermissionCollection;
-import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
-import java.security.SecureClassLoader;
 import java.security.cert.Certificate;
 import java.util.Enumeration;
-import java.util.Properties;
 import java.util.StringTokenizer;
-import java.util.Vector;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
@@ -218,6 +204,26 @@ public class GameUpdater implements Runnable {
       }
 
       System.out.println("Force update: " + forceUpdate);
+
+      if (!forceUpdate && validateCache(dir)) {
+        try {
+          File versionFile = new File(dir, "version");
+          if (versionFile.exists()) {
+            String cachedVersion = readVersionFile(versionFile);
+            if (cachedVersion != null && cachedVersion.equals(latestVersion)) {
+              shouldUpdate = false;
+              System.out.println("Cache is valid and up to date, skipping download");
+              updateClassPath(dir);
+              state = 10;
+              System.out.println("Update completed successfully!");
+              return;
+            }
+          }
+        } catch (Exception e) {
+          System.out.println("Error reading version, will update: " + e.getMessage());
+        }
+      }
+
       shouldUpdate = true;
 
       downloadJars(path);
@@ -234,12 +240,39 @@ public class GameUpdater implements Runnable {
       state = 10;
       System.out.println("Update completed successfully!");
     } catch (AccessControlException ace) {
-      fatalErrorOccured(ace.getMessage(), ace);
+      fatalErrorOccured("Недостаточно прав для записи в папку .minecraft! Запустите лаунчер от имени администратора.", ace);
       certificateRefused = true;
     } catch (Exception e) {
       fatalErrorOccured(e.getMessage(), e);
     } finally {
       loaderThread = null;
+    }
+  }
+
+  private boolean validateCache(File dir) {
+    try {
+      File versionFile = new File(dir, "version");
+      if (!versionFile.exists()) return false;
+
+      String[] requiredJars = {"lwjgl.jar", "jinput.jar", "lwjgl_util.jar", "minecraft.jar"};
+      for (String jar : requiredJars) {
+        File jarFile = new File(dir, jar);
+        if (!jarFile.exists() || jarFile.length() < 1000) {
+          System.out.println("Missing or corrupted: " + jar);
+          return false;
+        }
+      }
+
+      File nativesDir = new File(dir, "natives");
+      if (!nativesDir.exists() || nativesDir.list().length == 0) {
+        return false;
+      }
+
+      String version = readVersionFile(versionFile);
+      return version != null && version.length() > 0;
+    } catch (Exception e) {
+      e.printStackTrace();
+      return false;
     }
   }
 
@@ -274,18 +307,13 @@ public class GameUpdater implements Runnable {
     if (username == null || username.isEmpty()) {
       username = System.getProperty("minecraft.skin.username");
       if (username == null || username.isEmpty()) {
-        username = "Ayato432";
+        username = "Player";
       }
     }
     System.setProperty("minecraft.skin.username", username);
     System.out.println("Username for skins: " + username);
 
-    System.setProperty("fml.ignoreInvalidCert", "true");
-    System.setProperty("fml.ignoreDownloadErrors", "true");
-    System.setProperty("fml.skipModLoader", "true");
-    System.setProperty("fml.skipClassLoader", "true");
-    System.setProperty("fml.noForge", "true");
-    System.setProperty("fml.loadedMods", "none");
+    disableForge();
 
     System.setProperty("minecraft.skin.url.pattern", "https://skinsystem.ely.by/skins/%s.png");
     System.setProperty("minecraft.cape.url.pattern", "https://skinsystem.ely.by/cloaks/%s.png");
@@ -384,7 +412,6 @@ public class GameUpdater implements Runnable {
 
     String path = dir.getAbsolutePath();
     if (!path.endsWith(File.separator)) path = path + File.separator;
-    unloadNatives(path);
 
     System.setProperty("org.lwjgl.librarypath", path + "natives");
     System.setProperty("net.java.games.input.librarypath", path + "natives");
@@ -402,52 +429,68 @@ public class GameUpdater implements Runnable {
     loadPlayerSkin();
   }
 
+  private void disableForge() {
+    System.setProperty("fml.ignoreInvalidCert", "true");
+    System.setProperty("fml.ignoreDownloadErrors", "true");
+    System.setProperty("fml.skipModLoader", "true");
+    System.setProperty("fml.skipClassLoader", "true");
+    System.setProperty("fml.noForge", "true");
+    System.setProperty("fml.loadedMods", "none");
+    System.setProperty("forge.ignoreInvalidMinecraftCertificates", "true");
+    System.setProperty("forge.ignoreInvalidMods", "true");
+    System.setProperty("forge.offline", "true");
+    System.setProperty("forge.noMods", "true");
+    System.setProperty("fml.forceNoMods", "true");
+    System.setProperty("fml.modStates", "");
+    System.setProperty("fml.mods", "");
+  }
+
   private void loadPlayerSkin() {
     try {
       if (username != null && !username.isEmpty()) {
-        URL skinUrl = new URL("https://skinsystem.ely.by/skins/" + username + ".png");
-        HttpURLConnection connection = (HttpURLConnection) skinUrl.openConnection();
-        connection.setRequestProperty("User-Agent", "Minecraft Launcher");
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
-        connection.connect();
+        for (int attempt = 0; attempt < 3; attempt++) {
+          try {
+            URL skinUrl = new URL("https://skinsystem.ely.by/skins/" + username + ".png");
+            HttpURLConnection connection = (HttpURLConnection) skinUrl.openConnection();
+            connection.setRequestProperty("User-Agent", "Minecraft Launcher");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            connection.connect();
 
-        if (connection.getResponseCode() == 200) {
-          playerSkin = javax.imageio.ImageIO.read(connection.getInputStream());
-          System.out.println("Player skin loaded for: " + username);
-        } else {
-          System.out.println("Skin not found for: " + username + " (HTTP " + connection.getResponseCode() + ")");
-          playerSkin = null;
+            if (connection.getResponseCode() == 200) {
+              playerSkin = javax.imageio.ImageIO.read(connection.getInputStream());
+              System.out.println("Player skin loaded for: " + username);
+              connection.disconnect();
+              break;
+            }
+            connection.disconnect();
+            Thread.sleep(1000);
+          } catch (Exception e) {
+            System.out.println("Skin attempt " + (attempt + 1) + " failed: " + e.getMessage());
+            if (attempt == 2) {
+              playerSkin = createDefaultSkin();
+            }
+          }
         }
-        connection.disconnect();
       }
     } catch (Exception e) {
       System.out.println("Failed to load player skin: " + e.getMessage());
-      playerSkin = null;
+      playerSkin = createDefaultSkin();
     }
   }
 
-  private void unloadNatives(String nativePath) {
-    if (!natives_loaded) {
-      return;
-    }
-    try {
-      Field field = ClassLoader.class.getDeclaredField("loadedLibraryNames");
-      field.setAccessible(true);
-      Vector<?> libs = (Vector<?>) field.get(getClass().getClassLoader());
-
-      String path = new File(nativePath).getCanonicalPath();
-
-      for (int i = 0; i < libs.size(); i++) {
-        String s = (String) libs.get(i);
-        if (s.startsWith(path)) {
-          libs.remove(i);
-          i--;
-        }
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+  private BufferedImage createDefaultSkin() {
+    BufferedImage defaultSkin = new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB);
+    java.awt.Graphics g = defaultSkin.getGraphics();
+    g.setColor(new java.awt.Color(150, 150, 150));
+    g.fillRect(0, 0, 8, 8);
+    g.setColor(new java.awt.Color(100, 100, 100));
+    g.fillRect(2, 2, 2, 2);
+    g.fillRect(4, 2, 2, 2);
+    g.setColor(new java.awt.Color(80, 80, 255));
+    g.fillRect(3, 3, 2, 2);
+    g.dispose();
+    return defaultSkin;
   }
 
   public Applet createApplet() throws ClassNotFoundException, InstantiationException, IllegalAccessException {
@@ -495,44 +538,56 @@ public class GameUpdater implements Runnable {
 
     for (int i = 0; i < urlList.length; i++) {
       String currentFile = getFileName(urlList[i]);
-      System.out.println("Downloading file " + (i + 1) + "/" + urlList.length + ": " + currentFile);
+      boolean downloaded = false;
 
-      URLConnection urlconnection = urlList[i].openConnection();
-      urlconnection.setRequestProperty("Cache-Control", "no-cache");
-      urlconnection.setConnectTimeout(10000);
-      urlconnection.setReadTimeout(30000);
-      urlconnection.connect();
+      for (int attempt = 0; attempt < 3 && !downloaded; attempt++) {
+        try {
+          System.out.println("Downloading file " + (i + 1) + "/" + urlList.length + ": " + currentFile + " (attempt " + (attempt + 1) + ")");
 
-      InputStream inputstream = urlconnection.getInputStream();
-      FileOutputStream fos = new FileOutputStream(path + currentFile);
+          URLConnection urlconnection = urlList[i].openConnection();
+          urlconnection.setRequestProperty("Cache-Control", "no-cache");
+          urlconnection.setConnectTimeout(10000);
+          urlconnection.setReadTimeout(30000);
+          urlconnection.connect();
 
-      int fileSize = urlconnection.getContentLength();
-      int downloaded = 0;
-      int bytesRead;
+          InputStream inputstream = urlconnection.getInputStream();
+          FileOutputStream fos = new FileOutputStream(path + currentFile);
 
-      while ((bytesRead = inputstream.read(buffer, 0, buffer.length)) != -1) {
-        fos.write(buffer, 0, bytesRead);
-        downloaded += bytesRead;
-        currentSizeDownload += bytesRead;
+          int fileSize = urlconnection.getContentLength();
+          int downloadedBytes = 0;
+          int bytesRead;
 
-        if (fileSize > 0) {
-          percentage = initialPercentage + (currentSizeDownload * 45 / totalSizeDownload);
-          int progress = downloaded * 100 / fileSize;
-          subtaskMessage = "Downloading: " + currentFile + " " + progress + "%";
-          if (progress % 10 == 0) {
-            System.out.println(subtaskMessage);
+          while ((bytesRead = inputstream.read(buffer, 0, buffer.length)) != -1) {
+            fos.write(buffer, 0, bytesRead);
+            downloadedBytes += bytesRead;
+            currentSizeDownload += bytesRead;
+
+            if (fileSize > 0) {
+              percentage = initialPercentage + (currentSizeDownload * 45 / totalSizeDownload);
+              int progress = downloadedBytes * 100 / fileSize;
+              subtaskMessage = "Downloading: " + currentFile + " " + progress + "%";
+              if (progress % 10 == 0) {
+                System.out.println(subtaskMessage);
+              }
+            }
           }
+
+          inputstream.close();
+          fos.close();
+
+          File downloadedFile = new File(path + currentFile);
+          System.out.println("Downloaded: " + currentFile + " (" + downloadedFile.length() + " bytes)");
+
+          if (downloadedFile.length() == 0) {
+            throw new Exception("Failed to download " + currentFile + " - file is empty");
+          }
+
+          downloaded = true;
+        } catch (IOException e) {
+          System.err.println("Download failed: " + e.getMessage());
+          if (attempt == 2) throw e;
+          Thread.sleep(2000);
         }
-      }
-
-      inputstream.close();
-      fos.close();
-
-      File downloadedFile = new File(path + currentFile);
-      System.out.println("Downloaded: " + currentFile + " (" + downloadedFile.length() + " bytes)");
-
-      if (downloadedFile.length() == 0) {
-        throw new Exception("Failed to download " + currentFile + " - file is empty");
       }
     }
 

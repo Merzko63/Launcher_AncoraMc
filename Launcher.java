@@ -68,12 +68,7 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     customParameters.put("sessionid", sessionId);
     customParameters.put("minecraft.skin.username", userName);
 
-    System.setProperty("fml.ignoreInvalidCert", "true");
-    System.setProperty("fml.ignoreDownloadErrors", "true");
-    System.setProperty("fml.skipModLoader", "true");
-    System.setProperty("fml.skipClassLoader", "true");
-    System.setProperty("fml.noForge", "true");
-    System.setProperty("fml.loadedMods", "none");
+    disableForge();
 
     gameUpdater = new GameUpdater(latestVersion, "minecraft.jar?user=" + userName + "&ticket=" + downloadTicket);
     gameUpdater.username = userName;
@@ -90,35 +85,78 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     loadSkin();
   }
 
+  private void disableForge() {
+    System.setProperty("fml.ignoreInvalidCert", "true");
+    System.setProperty("fml.ignoreDownloadErrors", "true");
+    System.setProperty("fml.skipModLoader", "true");
+    System.setProperty("fml.skipClassLoader", "true");
+    System.setProperty("fml.noForge", "true");
+    System.setProperty("fml.loadedMods", "none");
+    System.setProperty("forge.ignoreInvalidMinecraftCertificates", "true");
+    System.setProperty("forge.ignoreInvalidMods", "true");
+    System.setProperty("forge.offline", "true");
+    System.setProperty("forge.noMods", "true");
+    System.setProperty("fml.forceNoMods", "true");
+    System.setProperty("fml.modStates", "");
+    System.setProperty("fml.mods", "");
+    System.out.println("Forge disabled via system properties");
+  }
+
   private void loadSkin() {
     new Thread() {
       public void run() {
         try {
           String name = username != null ? username : "Player";
           if (name != null && !name.isEmpty()) {
-            URL skinUrl = new URL("https://skinsystem.ely.by/skins/" + name + ".png");
-            HttpURLConnection connection = (HttpURLConnection) skinUrl.openConnection();
-            connection.setRequestProperty("User-Agent", "Minecraft Launcher");
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(10000);
-            connection.connect();
-            if (connection.getResponseCode() == 200) {
-              BufferedImage fullSkin = ImageIO.read(connection.getInputStream());
-              if (fullSkin != null) {
-                playerSkin = cropSkinHead(fullSkin);
-                skinLoaded = true;
-                System.out.println("Skin loaded for: " + name);
+            for (int attempt = 0; attempt < 3; attempt++) {
+              try {
+                URL skinUrl = new URL("https://skinsystem.ely.by/skins/" + name + ".png");
+                HttpURLConnection connection = (HttpURLConnection) skinUrl.openConnection();
+                connection.setRequestProperty("User-Agent", "Minecraft Launcher");
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
+                connection.connect();
+
+                if (connection.getResponseCode() == 200) {
+                  BufferedImage fullSkin = ImageIO.read(connection.getInputStream());
+                  if (fullSkin != null) {
+                    playerSkin = cropSkinHead(fullSkin);
+                    skinLoaded = true;
+                    System.out.println("Skin loaded for: " + name);
+                  }
+                  connection.disconnect();
+                  break;
+                }
+                connection.disconnect();
+                Thread.sleep(1000);
+              } catch (Exception e) {
+                System.out.println("Skin attempt " + (attempt + 1) + " failed: " + e.getMessage());
+                if (attempt == 2) {
+                  playerSkin = createDefaultSkin();
+                }
               }
-            } else {
-              System.out.println("Skin not found for: " + name);
             }
-            connection.disconnect();
           }
         } catch (Exception e) {
           System.out.println("Failed to load skin: " + e.getMessage());
+          playerSkin = createDefaultSkin();
         }
       }
     }.start();
+  }
+
+  private BufferedImage createDefaultSkin() {
+    BufferedImage defaultSkin = new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB);
+    Graphics g = defaultSkin.getGraphics();
+    g.setColor(new Color(150, 150, 150));
+    g.fillRect(0, 0, 8, 8);
+    g.setColor(new Color(100, 100, 100));
+    g.fillRect(2, 2, 2, 2);
+    g.fillRect(4, 2, 2, 2);
+    g.setColor(new Color(80, 80, 255));
+    g.fillRect(3, 3, 2, 2);
+    g.dispose();
+    return defaultSkin;
   }
 
   private BufferedImage cropSkinHead(BufferedImage fullSkin) {
@@ -138,7 +176,7 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
 
       return head;
     } catch (Exception e) {
-      return null;
+      return createDefaultSkin();
     }
   }
 
@@ -221,41 +259,7 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
 
   public void replace(Applet applet) {
     try {
-      boolean hasFML = false;
-      try {
-        Class.forName("cpw.mods.fml.relauncher.FMLRelauncher");
-        hasFML = true;
-      } catch (ClassNotFoundException e) {
-      }
-
-      if (hasFML) {
-        System.out.println("FML detected, applying fix...");
-        System.setProperty("fml.ignoreInvalidCert", "true");
-        System.setProperty("fml.ignoreDownloadErrors", "true");
-        System.setProperty("fml.skipModLoader", "true");
-        System.setProperty("fml.skipClassLoader", "true");
-        System.setProperty("fml.noForge", "true");
-        System.setProperty("fml.loadedMods", "none");
-
-        try {
-          Class<?> fmlClass = Class.forName("cpw.mods.fml.relauncher.FMLRelauncher");
-          try {
-            java.lang.reflect.Field ignoreField = fmlClass.getDeclaredField("ignoreInvalidCert");
-            ignoreField.setAccessible(true);
-            ignoreField.setBoolean(null, true);
-          } catch (Exception e) {}
-
-          try {
-            java.lang.reflect.Field libField = fmlClass.getDeclaredField("libraryDownloadDisabled");
-            libField.setAccessible(true);
-            libField.setBoolean(null, true);
-          } catch (Exception e) {}
-
-          System.out.println("FML disabled via reflection!");
-        } catch (Exception e) {
-          System.err.println("Could not disable FML: " + e.getMessage());
-        }
-      }
+      disableForge();
 
       this.applet = applet;
       applet.setStub(this);
@@ -313,72 +317,19 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     } catch (Exception e) {
       System.err.println("Failed to start applet: " + e.getMessage());
       e.printStackTrace();
+      gameUpdater.fatalError = true;
+      gameUpdater.fatalErrorDescription = "Ошибка запуска: " + e.getMessage() + "\nЗапустите лаунчер от имени администратора";
     }
   }
 
   private void injectServerParameters(Applet applet, String serverIP, String serverPort) {
     try {
-      Class<?> appletClass = applet.getClass();
-      java.lang.reflect.Field[] fields = appletClass.getDeclaredFields();
-
-      for (java.lang.reflect.Field field : fields) {
-        if (java.util.Map.class.isAssignableFrom(field.getType())) {
-          field.setAccessible(true);
-          @SuppressWarnings("unchecked")
-          java.util.Map<String, Object> params = (java.util.Map<String, Object>) field.get(applet);
-          if (params != null) {
-            params.put("server", serverIP);
-            params.put("port", serverPort);
-            params.put("mp", "true");
-            params.put("singleplayer", "false");
-            params.put("multiplayer", "true");
-            params.put("server-address", serverIP + ":" + serverPort);
-            System.out.println("Injected server parameters via field: " + field.getName());
-            return;
-          }
-        }
-      }
-
-      try {
-        java.lang.reflect.Field paramField = appletClass.getDeclaredField("parameters");
-        paramField.setAccessible(true);
-        Object params = paramField.get(applet);
-        if (params instanceof java.util.Map) {
-          @SuppressWarnings("unchecked")
-          java.util.Map<String, String[]> mapParams = (java.util.Map<String, String[]>) params;
-          mapParams.put("server", new String[]{serverIP});
-          mapParams.put("port", new String[]{serverPort});
-          mapParams.put("mp", new String[]{"true"});
-          mapParams.put("singleplayer", new String[]{"false"});
-          mapParams.put("multiplayer", new String[]{"true"});
-          System.out.println("Injected server parameters via parameters field");
-          return;
-        }
-      } catch (NoSuchFieldException e) {
-      }
-
-      try {
-        java.lang.reflect.Method setParamMethod = appletClass.getMethod("setParameter", String.class, String.class);
-        setParamMethod.invoke(applet, "server", serverIP);
-        setParamMethod.invoke(applet, "port", serverPort);
-        setParamMethod.invoke(applet, "mp", "true");
-        System.out.println("Set server parameters via setParameter method");
-        return;
-      } catch (NoSuchMethodException e) {
-      }
-
-      try {
-        java.lang.reflect.Method putParamMethod = appletClass.getMethod("putParameter", String.class, String.class);
-        putParamMethod.invoke(applet, "server", serverIP);
-        putParamMethod.invoke(applet, "port", serverPort);
-        putParamMethod.invoke(applet, "mp", "true");
-        System.out.println("Set server parameters via putParameter method");
-        return;
-      } catch (NoSuchMethodException e) {
-      }
-
-      System.out.println("Could not inject server parameters - no suitable field or method found");
-
+      System.setProperty("minecraft.server", serverIP);
+      System.setProperty("minecraft.server.port", serverPort);
+      System.setProperty("minecraft.mp", "true");
+      System.setProperty("minecraft.singleplayer", "false");
+      System.setProperty("minecraft.multiplayer", "true");
+      System.out.println("Set server parameters via system properties");
     } catch (Exception e) {
       System.out.println("Failed to inject server parameters: " + e.getMessage());
     }
@@ -398,15 +349,6 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
 
   public String getUsername() {
     return username;
-  }
-
-  private void drawSkinPreview(Graphics g, int x, int y, int size) {
-    if (playerSkin == null) return;
-
-    try {
-      g.drawImage(playerSkin, x, y, size, size, null);
-    } catch (Exception e) {
-    }
   }
 
   private void drawLoadingHead(Graphics g, int w, int h) {
