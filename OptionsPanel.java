@@ -24,8 +24,7 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.border.EmptyBorder;
 
-public class OptionsPanel extends JDialog
-{
+public class OptionsPanel extends JDialog {
   private static final long serialVersionUID = 1L;
 
   private JTextField minMemoryField;
@@ -33,8 +32,7 @@ public class OptionsPanel extends JDialog
   private JTextField pathField;
   private JCheckBox customPathCheck;
 
-  public OptionsPanel(Frame parent)
-  {
+  public OptionsPanel(Frame parent) {
     super(parent);
     setTitle("Настройки лаунчера");
     setModal(true);
@@ -104,17 +102,22 @@ public class OptionsPanel extends JDialog
     TransparentLabel dirLink = new TransparentLabel("Текущий путь: " + Util.getWorkingDirectory().toString()) {
       private static final long serialVersionUID = 0L;
 
-      public void paint(Graphics g) { super.paint(g);
+      public void paint(Graphics g) {
+        super.paint(g);
         int x = 0;
         int y = 0;
         FontMetrics fm = g.getFontMetrics();
         int width = fm.stringWidth(getText());
         int height = fm.getHeight();
-        if (getAlignmentX() == 2.0F) x = 0;
-        else if (getAlignmentX() == 0.0F) x = getBounds().width / 2 - width / 2;
-        else if (getAlignmentX() == 4.0F) x = getBounds().width - width;
+        if (getAlignmentX() == 2.0F)
+          x = 0;
+        else if (getAlignmentX() == 0.0F)
+          x = getBounds().width / 2 - width / 2;
+        else if (getAlignmentX() == 4.0F)
+          x = getBounds().width - width;
         y = getBounds().height / 2 + height / 2 - 1;
-        g.drawLine(x + 2, y, x + width - 2, y); }
+        g.drawLine(x + 2, y, x + width - 2, y);
+      }
     };
     dirLink.setCursor(Cursor.getPredefinedCursor(12));
     dirLink.addMouseListener(new MouseAdapter() {

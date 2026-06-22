@@ -34,7 +34,6 @@ public class Util
         workingDirectory = new File(userHome, '.' + applicationName + '/');
         break;
       case 2:
-        // Windows - используем %appdata%/rouming/.minecraft
         String applicationData = System.getenv("APPDATA");
         if (applicationData != null) {
           workingDirectory = new File(applicationData, "rouming/.minecraft/");
@@ -43,11 +42,9 @@ public class Util
         }
         break;
       case 3:
-        // MacOS
         workingDirectory = new File(userHome, "Library/Application Support/rouming/minecraft");
         break;
       default:
-        // Linux/Unix
         workingDirectory = new File(userHome, "rouming/.minecraft/");
     }
     if ((!workingDirectory.exists()) && (!workingDirectory.mkdirs())) {

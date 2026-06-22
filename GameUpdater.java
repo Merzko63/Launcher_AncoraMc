@@ -23,12 +23,17 @@ import java.security.AccessController;
 import java.security.CodeSource;
 import java.security.PrivilegedExceptionAction;
 import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.Enumeration;
 import java.util.StringTokenizer;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Pack200;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 import SevenZip.LzmaAlone;
 
@@ -62,10 +67,12 @@ public class GameUpdater implements Runnable {
   protected boolean pack200Supported = false;
 
   protected String[] genericErrorMessage = {
-          "An error occured while loading the applet.", "Please contact support to resolve this issue.", "<placeholder for error message>" };
+          "An error occured while loading the applet.", "Please contact support to resolve this issue.",
+          "<placeholder for error message>" };
   protected boolean certificateRefused;
   protected String[] certificateRefusedMessage = {
-          "Permissions for Applet Refused.", "Please accept the permissions dialog to allow", "the applet to continue the loading process." };
+          "Permissions for Applet Refused.", "Please accept the permissions dialog to allow",
+          "the applet to continue the loading process." };
 
   protected static boolean natives_loaded = false;
   public static boolean forceUpdate = false;
@@ -79,6 +86,31 @@ public class GameUpdater implements Runnable {
   public GameUpdater(String latestVersion, String mainGameUrl) {
     this.latestVersion = latestVersion;
     this.mainGameUrl = mainGameUrl;
+    this.shouldUpdate = false;
+    disableSSLVerification();
+  }
+
+  private void disableSSLVerification() {
+    try {
+      TrustManager[] trustAllCerts = new TrustManager[] {
+              new X509TrustManager() {
+                public X509Certificate[] getAcceptedIssuers() {
+                  return null;
+                }
+                public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                }
+                public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                }
+              }
+      };
+      SSLContext sc = SSLContext.getInstance("TLS");
+      sc.init(null, trustAllCerts, new java.security.SecureRandom());
+      HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+      HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
+      System.out.println("SSL verification disabled for IP connections");
+    } catch (Exception e) {
+      System.out.println("Failed to disable SSL verification: " + e.getMessage());
+    }
   }
 
   public void init() {
@@ -142,7 +174,12 @@ public class GameUpdater implements Runnable {
     state = 2;
     System.out.println("Loading JAR URLs...");
 
-    String jarList = "lwjgl.jar, jinput.jar, lwjgl_util.jar, " + mainGameUrl;
+    String jarList;
+    if ("1.1".equals(latestVersion)) {
+      jarList = "lwjgl.jar, jinput.jar, lwjgl_util.jar, minecraft_1.1.jar";
+    } else {
+      jarList = "lwjgl.jar, jinput.jar, lwjgl_util.jar, " + mainGameUrl;
+    }
     jarList = trimExtensionByCapabilities(jarList);
     System.out.println("JAR list: " + jarList);
 
@@ -207,7 +244,7 @@ public class GameUpdater implements Runnable {
 
       if (!forceUpdate && validateCache(dir)) {
         try {
-          File versionFile = new File(dir, "version");
+          File versionFile = new File(dir, "version_" + latestVersion);
           if (versionFile.exists()) {
             String cachedVersion = readVersionFile(versionFile);
             if (cachedVersion != null && cachedVersion.equals(latestVersion)) {
@@ -232,7 +269,7 @@ public class GameUpdater implements Runnable {
 
       if (latestVersion != null) {
         percentage = 90;
-        File versionFile = new File(dir, "version");
+        File versionFile = new File(dir, "version_" + latestVersion);
         writeVersionFile(versionFile, latestVersion);
       }
 
@@ -240,7 +277,8 @@ public class GameUpdater implements Runnable {
       state = 10;
       System.out.println("Update completed successfully!");
     } catch (AccessControlException ace) {
-      fatalErrorOccured("Недостаточно прав для записи в папку .minecraft! Запустите лаунчер от имени администратора.", ace);
+      fatalErrorOccured("Недостаточно прав для записи в папку .minecraft! Запустите лаунчер от имени администратора.",
+              ace);
       certificateRefused = true;
     } catch (Exception e) {
       fatalErrorOccured(e.getMessage(), e);
@@ -251,10 +289,12 @@ public class GameUpdater implements Runnable {
 
   private boolean validateCache(File dir) {
     try {
-      File versionFile = new File(dir, "version");
-      if (!versionFile.exists()) return false;
+      File versionFile = new File(dir, "version_" + latestVersion);
+      if (!versionFile.exists())
+        return false;
 
-      String[] requiredJars = {"lwjgl.jar", "jinput.jar", "lwjgl_util.jar", "minecraft.jar"};
+      String minecraftJar = "1.1".equals(latestVersion) ? "minecraft_1.1.jar" : "minecraft.jar";
+      String[] requiredJars = { "lwjgl.jar", "jinput.jar", "lwjgl_util.jar", minecraftJar };
       for (String jar : requiredJars) {
         File jarFile = new File(dir, jar);
         if (!jarFile.exists() || jarFile.length() < 1000) {
@@ -269,7 +309,7 @@ public class GameUpdater implements Runnable {
       }
 
       String version = readVersionFile(versionFile);
-      return version != null && version.length() > 0;
+      return version != null && version.length() > 0 && version.equals(latestVersion);
     } catch (Exception e) {
       e.printStackTrace();
       return false;
@@ -324,7 +364,7 @@ public class GameUpdater implements Runnable {
 
     File[] jarFiles = dir.listFiles(new java.io.FilenameFilter() {
       public boolean accept(File dir, String name) {
-        return name.endsWith(".jar") && !name.contains("natives");
+        return name.endsWith(".jar") && !name.contains("natives") && !name.contains("_1.1");
       }
     });
 
@@ -359,8 +399,15 @@ public class GameUpdater implements Runnable {
       System.out.println("Added lwjgl.jar first");
     }
 
+    String minecraftJar = "1.1".equals(latestVersion) ? "minecraft_1.1.jar" : "minecraft.jar";
+    File minecraftFile = new File(dir, minecraftJar);
+    if (minecraftFile.exists()) {
+      urlList.add(minecraftFile.toURI().toURL());
+      System.out.println("Added: " + minecraftJar);
+    }
+
     for (File jarFile : jarFiles) {
-      if (!jarFile.getName().equals("lwjgl.jar")) {
+      if (!jarFile.getName().equals("lwjgl.jar") && !jarFile.getName().equals(minecraftJar)) {
         urlList.add(jarFile.toURI().toURL());
         System.out.println("Added: " + jarFile.getName());
       }
@@ -411,7 +458,8 @@ public class GameUpdater implements Runnable {
     System.setProperty("user.name", username);
 
     String path = dir.getAbsolutePath();
-    if (!path.endsWith(File.separator)) path = path + File.separator;
+    if (!path.endsWith(File.separator))
+      path = path + File.separator;
 
     System.setProperty("org.lwjgl.librarypath", path + "natives");
     System.setProperty("net.java.games.input.librarypath", path + "natives");
@@ -542,7 +590,8 @@ public class GameUpdater implements Runnable {
 
       for (int attempt = 0; attempt < 3 && !downloaded; attempt++) {
         try {
-          System.out.println("Downloading file " + (i + 1) + "/" + urlList.length + ": " + currentFile + " (attempt " + (attempt + 1) + ")");
+          System.out.println("Downloading file " + (i + 1) + "/" + urlList.length + ": " + currentFile
+                  + " (attempt " + (attempt + 1) + ")");
 
           URLConnection urlconnection = urlList[i].openConnection();
           urlconnection.setRequestProperty("Cache-Control", "no-cache");
@@ -585,7 +634,8 @@ public class GameUpdater implements Runnable {
           downloaded = true;
         } catch (IOException e) {
           System.err.println("Download failed: " + e.getMessage());
-          if (attempt == 2) throw e;
+          if (attempt == 2)
+            throw e;
           Thread.sleep(2000);
         }
       }
@@ -617,7 +667,8 @@ public class GameUpdater implements Runnable {
         } catch (InterruptedException localInterruptedException) {
         }
       }
-      if (is[0] != null) continue;
+      if (is[0] != null)
+        continue;
       try {
         t.interrupt();
         t.join();
@@ -680,7 +731,8 @@ public class GameUpdater implements Runnable {
       if (filename.endsWith(".pack.lzma")) {
         subtaskMessage = ("Extracting: " + filename + " to " + filename.replaceAll(".lzma", ""));
         extractLZMA(path + filename, path + filename.replaceAll(".lzma", ""));
-        subtaskMessage = ("Extracting: " + filename.replaceAll(".lzma", "") + " to " + filename.replaceAll(".pack.lzma", ""));
+        subtaskMessage = ("Extracting: " + filename.replaceAll(".lzma", "") + " to "
+                + filename.replaceAll(".pack.lzma", ""));
         extractPack(path + filename.replaceAll(".lzma", ""), path + filename.replaceAll(".pack.lzma", ""));
       } else if (filename.endsWith(".pack")) {
         subtaskMessage = ("Extracting: " + filename + " to " + filename.replace(".pack", ""));
@@ -706,7 +758,8 @@ public class GameUpdater implements Runnable {
 
     if (certificate == null) {
       URL location = Launcher.class.getProtectionDomain().getCodeSource().getLocation();
-      JarURLConnection jurl = (JarURLConnection) new URL("jar:" + location.toString() + "!/net/minecraft/Launcher.class").openConnection();
+      JarURLConnection jurl = (JarURLConnection) new URL(
+              "jar:" + location.toString() + "!/net/minecraft/Launcher.class").openConnection();
       jurl.setDefaultUseCaches(true);
       try {
         certificate = jurl.getCertificates();
@@ -761,7 +814,8 @@ public class GameUpdater implements Runnable {
         currentSizeExtract += bufferSize;
         if (totalSizeExtract > 0) {
           percentage = (initialPercentage + currentSizeExtract * 20 / totalSizeExtract);
-          subtaskMessage = ("Extracting: " + entry.getName() + " " + currentSizeExtract * 100 / totalSizeExtract + "%");
+          subtaskMessage = ("Extracting: " + entry.getName() + " " + currentSizeExtract * 100 / totalSizeExtract
+                  + "%");
         }
       }
 
@@ -779,10 +833,15 @@ public class GameUpdater implements Runnable {
   }
 
   protected static void validateCertificateChain(Certificate[] ownCerts, Certificate[] native_certs) throws Exception {
-    if (ownCerts == null) return;
-    if (native_certs == null) throw new Exception("Unable to validate certificate chain. Native entry did not have a certificate chain at all");
+    if (ownCerts == null)
+      return;
+    if (native_certs == null)
+      throw new Exception("Unable to validate certificate chain. Native entry did not have a certificate chain at all");
 
-    if (ownCerts.length != native_certs.length) throw new Exception("Unable to validate certificate chain. Chain differs in length [" + ownCerts.length + " vs " + native_certs.length + "]");
+    if (ownCerts.length != native_certs.length)
+      throw new Exception(
+              "Unable to validate certificate chain. Chain differs in length [" + ownCerts.length + " vs "
+                      + native_certs.length + "]");
 
     for (int i = 0; i < ownCerts.length; i++)
       if (!ownCerts[i].equals(native_certs[i]))
@@ -832,14 +891,16 @@ public class GameUpdater implements Runnable {
         }
       });
       File dir = new File(path);
-      if (!dir.exists()) return false;
+      if (!dir.exists())
+        return false;
 
-      dir = new File(dir, "version");
-      if (!dir.exists()) return false;
+      File versionFile = new File(dir, "version_" + latestVersion);
+      if (!versionFile.exists())
+        return false;
 
-      if (dir.exists()) {
-        String version = readVersionFile(dir);
-        if ((version != null) && (version.length() > 0))
+      if (versionFile.exists()) {
+        String version = readVersionFile(versionFile);
+        if ((version != null) && (version.length() > 0) && version.equals(latestVersion))
           return true;
       }
     } catch (Exception e) {

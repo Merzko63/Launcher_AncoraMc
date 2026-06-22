@@ -41,6 +41,7 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
   private String serverIP = null;
   private String serverPort = "25565";
   private boolean skinLoaded = false;
+  private String selectedVersion = "1.5.2";
 
   public boolean isActive() {
     if (context == 0) {
@@ -67,11 +68,22 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     customParameters.put("username", userName);
     customParameters.put("sessionid", sessionId);
     customParameters.put("minecraft.skin.username", userName);
+    customParameters.put("latestVersion", latestVersion);
+    customParameters.put("selectedVersion", selectedVersion);
 
     disableForge();
 
-    gameUpdater = new GameUpdater(latestVersion, "minecraft.jar?user=" + userName + "&ticket=" + downloadTicket);
+    String mainJar;
+    if ("1.1".equals(selectedVersion)) {
+      mainJar = "minecraft_1.1.jar";
+      System.out.println("Using version 1.1: " + mainJar);
+    } else {
+      mainJar = "minecraft.jar?user=" + userName + "&ticket=" + downloadTicket;
+      System.out.println("Using version 1.5.2: " + mainJar);
+    }
+    gameUpdater = new GameUpdater(selectedVersion, mainJar);
     gameUpdater.username = userName;
+    gameUpdater.shouldUpdate = false;
 
     serverIP = customParameters.get("server");
     if (customParameters.containsKey("port")) {
@@ -83,6 +95,45 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     }
 
     loadSkin();
+
+    loadSelectedVersion();
+  }
+
+  private void loadSelectedVersion() {
+    try {
+      File settingsFile = new File(Util.getWorkingDirectory(), "launcher_settings.properties");
+      if (settingsFile.exists()) {
+        java.util.Properties props = new java.util.Properties();
+        props.load(new java.io.FileInputStream(settingsFile));
+        String savedVersion = props.getProperty("selectedVersion");
+        if (savedVersion != null && !savedVersion.isEmpty()) {
+          selectedVersion = savedVersion;
+          System.out.println("Loaded saved version: " + selectedVersion);
+        }
+      }
+    } catch (Exception e) {
+      System.out.println("Failed to load saved version: " + e.getMessage());
+    }
+  }
+
+  public void setSelectedVersion(String version) {
+    this.selectedVersion = version;
+    System.out.println("Selected version set: " + version);
+    saveSelectedVersion(version);
+  }
+
+  private void saveSelectedVersion(String version) {
+    try {
+      File settingsFile = new File(Util.getWorkingDirectory(), "launcher_settings.properties");
+      java.util.Properties props = new java.util.Properties();
+      if (settingsFile.exists()) {
+        props.load(new java.io.FileInputStream(settingsFile));
+      }
+      props.setProperty("selectedVersion", version);
+      props.store(new java.io.FileOutputStream(settingsFile), "Launcher Settings");
+    } catch (Exception e) {
+      System.out.println("Failed to save version: " + e.getMessage());
+    }
   }
 
   private void disableForge() {
@@ -268,16 +319,35 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
       setLayout(new BorderLayout());
       add(applet, "Center");
 
-      if (forceServerJoin && serverIP != null && !serverIP.isEmpty()) {
-        System.out.println("Force joining server: " + serverIP + ":" + serverPort);
+      String server = customParameters.get("server");
+      if (server == null || server.isEmpty()) {
+        server = System.getProperty("minecraft.server");
+      }
+
+      if (server != null && !server.isEmpty()) {
+        String port = customParameters.get("port");
+        if (port == null || port.isEmpty()) {
+          port = System.getProperty("minecraft.server.port", "25565");
+        }
+
+        String finalServer = server;
+        String finalPort = port;
+
+        if (selectedVersion != null && selectedVersion.equals("1.1")) {
+          finalServer = "old.AeternaMc.pro";
+          finalPort = "25565";
+          System.out.println("Using 1.1 server: old.AeternaMc.pro");
+        }
+
+        System.out.println("Force joining server: " + finalServer + ":" + finalPort);
 
         System.setProperty("minecraft.singleplayer", "false");
         System.setProperty("minecraft.multiplayer", "true");
         System.setProperty("minecraft.mp", "true");
-        System.setProperty("minecraft.server", serverIP);
-        System.setProperty("minecraft.server.port", serverPort);
+        System.setProperty("minecraft.server", finalServer);
+        System.setProperty("minecraft.server.port", finalPort);
 
-        injectServerParameters(applet, serverIP, serverPort);
+        injectServerParameters(applet, finalServer, finalPort);
 
         try {
           String workingDir = Util.getWorkingDirectory().getAbsolutePath();
@@ -290,14 +360,14 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
 
           DataOutputStream dos = new DataOutputStream(new FileOutputStream(serversFile));
           dos.writeInt(1);
-          dos.writeUTF(serverIP + ":" + serverPort);
-          dos.writeUTF("AeternaMc");
+          dos.writeUTF(finalServer + ":" + finalPort);
+          dos.writeUTF("AncoraMc");
           dos.writeUTF("");
           dos.writeUTF("");
           dos.writeBoolean(true);
           dos.close();
 
-          System.out.println("Created servers.dat with server: " + serverIP + ":" + serverPort);
+          System.out.println("Created servers.dat with server: " + finalServer + ":" + finalPort);
         } catch (Exception e) {
           System.out.println("Could not create servers.dat: " + e.getMessage());
         }
@@ -318,7 +388,8 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
       System.err.println("Failed to start applet: " + e.getMessage());
       e.printStackTrace();
       gameUpdater.fatalError = true;
-      gameUpdater.fatalErrorDescription = "Ошибка запуска: " + e.getMessage() + "\nЗапустите лаунчер от имени администратора";
+      gameUpdater.fatalErrorDescription = "Ошибка запуска: " + e.getMessage()
+              + "\nЗапустите лаунчер от имени администратора";
     }
   }
 
@@ -433,7 +504,7 @@ public class Launcher extends Applet implements Runnable, AppletStub, MouseListe
     } else {
       g.setColor(Color.LIGHT_GRAY);
 
-      String msg = "Updating Minecraft";
+      String msg = "Запуск Minecraft " + selectedVersion;
       if (gameUpdater.fatalError) {
         msg = "Failed to launch";
       }

@@ -54,6 +54,8 @@ public class LoginForm extends TransparentPanel
   private LauncherFrame launcherFrame;
   private boolean outdated = false;
   private JScrollPane scrollPane;
+  private String selectedVersion = "1.5.2";
+  private VersionSelector versionSelector;
 
   public LoginForm(final LauncherFrame launcherFrame)
   {
@@ -94,6 +96,36 @@ public class LoginForm extends TransparentPanel
         new OptionsPanel(launcherFrame).setVisible(true);
       }
     });
+
+    String savedVersion = getSavedVersion();
+    if (savedVersion != null) {
+      selectedVersion = savedVersion;
+    }
+  }
+
+  private String getSavedVersion() {
+    try {
+      File settingsFile = new File(Util.getWorkingDirectory(), "launcher_settings.properties");
+      if (settingsFile.exists()) {
+        java.util.Properties props = new java.util.Properties();
+        props.load(new java.io.FileInputStream(settingsFile));
+        String savedVersion = props.getProperty("selectedVersion");
+        if (savedVersion != null && !savedVersion.isEmpty()) {
+          return savedVersion;
+        }
+      }
+    } catch (Exception e) {
+      System.out.println("Failed to load saved version: " + e.getMessage());
+    }
+    return "1.5.2";
+  }
+
+  public void setSelectedVersion(String version) {
+    this.selectedVersion = version;
+    if (versionSelector != null) {
+      versionSelector.setSelectedVersion(version);
+    }
+    launcherFrame.setSelectedVersion(version);
   }
 
   public void doLogin() {
@@ -184,7 +216,7 @@ public class LoginForm extends TransparentPanel
       new Thread() {
         public void run() {
           try {
-            editorPane.setPage(new URL("https://AncoraMc.pro/"));
+            editorPane.setPage(new URL("https://AncoraMc.pro"));
           } catch (Exception e) {
             e.printStackTrace();
             editorPane.setText("<html><body><font color=\"#808080\"><br><br><br><br><br><br><br><center>Failed to update news<br>" + e.toString() + "</center></font></body></html>");
@@ -230,6 +262,18 @@ public class LoginForm extends TransparentPanel
     layout.setVgap(8);
     panel.setLayout(layout);
 
+    TransparentPanel leftPanel = new TransparentPanel(new BorderLayout());
+    leftPanel.setInsets(0, 0, 0, 10);
+
+    versionSelector = new VersionSelector();
+    versionSelector.setSelectedVersion(selectedVersion);
+    versionSelector.addVersionListener(new VersionSelector.VersionListener() {
+      public void onVersionSelected(String version) {
+        setSelectedVersion(version);
+      }
+    });
+    leftPanel.add(versionSelector, "North");
+
     GridLayout gl1 = new GridLayout(0, 1);
     gl1.setVgap(2);
     GridLayout gl2 = new GridLayout(0, 1);
@@ -248,8 +292,12 @@ public class LoginForm extends TransparentPanel
     values.add(password);
     values.add(rememberBox);
 
-    panel.add(titles, "West");
-    panel.add(values, "Center");
+    TransparentPanel centerPanel = new TransparentPanel(new BorderLayout());
+    centerPanel.add(titles, "West");
+    centerPanel.add(values, "Center");
+
+    panel.add(leftPanel, "West");
+    panel.add(centerPanel, "Center");
 
     TransparentPanel loginPanel = new TransparentPanel(new BorderLayout());
 
